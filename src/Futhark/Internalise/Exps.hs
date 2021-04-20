@@ -13,6 +13,7 @@ import Data.List (find, intercalate, intersperse, transpose)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
+import Debug.Trace
 import Futhark.IR.SOACS as I hiding (stmPat)
 import Futhark.Internalise.AccurateSizes
 import Futhark.Internalise.Bindings
@@ -116,7 +117,7 @@ generateEntryPoint (E.EntryPoint e_params e_rettype) vb = localConstsScope $ do
         Nothing ->
           fst <$> funcall "entry_result" (E.qualName ofname) args loc
       ctx <-
-        extractShapeContext (concat entry_rettype)
+        extractShapeContext (zeroExts $ concat entry_rettype)
           <$> mapM (fmap I.arrayDims . subExpType) vals
       pure (subExpsRes $ ctx ++ vals, map (const (I.Prim int64)) ctx)
 
@@ -125,9 +126,11 @@ generateEntryPoint (E.EntryPoint e_params e_rettype) vb = localConstsScope $ do
         (Just entry')
         (internaliseAttrs attrs)
         ("entry_" <> baseName ofname)
-        (ctx_ts ++ concat entry_rettype)
+        (ctx_ts ++ zeroExts (concat entry_rettype))
         (shapeparams ++ concat params')
         entry_body
+  where
+    zeroExts ts = generaliseExtTypes ts ts
 
 entryPoint ::
   Name ->
@@ -352,7 +355,7 @@ internaliseAppExp desc (E.Range start maybe_second end loc) = do
   return [se]
 internaliseAppExp desc (E.Coerce e (TypeDecl dt (Info et)) loc) = do
   ses <- internaliseExp desc e
-  ts <- internaliseReturnType et =<< mapM subExpType ses
+  ts <- internaliseReturnType (E.RetType [] et) =<< mapM subExpType ses
   dt' <- typeExpForError dt
   forM (zip ses ts) $ \(e', t') -> do
     dims <- arrayDims <$> subExpType e'
@@ -1529,7 +1532,7 @@ bodyExtType (Body _ stms res) =
 internaliseLambda :: InternaliseLambda
 internaliseLambda (E.Parens e _) rowtypes =
   internaliseLambda e rowtypes
-internaliseLambda (E.Lambda params body _ (Info (_, rettype)) _) rowtypes =
+internaliseLambda (E.Lambda params body _ (Info (_, RetType _ rettype)) _) rowtypes =
   bindingLambdaParams params rowtypes $ \params' -> do
     body' <- internaliseBody "lam" body
     rettype' <- internaliseLambdaReturnType rettype =<< bodyExtType body'
